@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fdep-mcp-server"
+version = "0.1.0"
+description = "Model Context Protocol (MCP) Server for Advanced Haskell Code Analysis - 40+ Comprehensive Analysis Tools"
+authors = [
+    {name = "Uzair Khan", email = "uzair.khan@juspay.in"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+keywords = ["mcp", "model-context-protocol", "haskell", "code-analysis", "static-analysis", "fdep", "spider-plugin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Communications",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "python-dotenv>=1.0.0",
+    "code_as_data@git+https://github.com/juspay/code-as-data.git",
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fdep_mcp*"]
+
+[project.scripts]
+fdep-mcp-server = "fdep_mcp:main"
+
+[project.urls]
+homepage = "https://github.com/juspay/fdep-mcp-server"
+repository = "https://github.com/juspay/fdep-mcp-server.git"
+documentation = "https://github.com/juspay/fdep-mcp-server/blob/main/README.md"
+
+[project.entry-points."mcp.servers"]
+fdep = "fdep_mcp:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py313']
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
