@@ -90,7 +90,7 @@ Add to your `~/.claude/settings.json`:
 ```json
 {
   "mcpServers": {
-    "fdep": {
+    "fdepAnalyzer": {
       "command": "fdep-mcp-server",
       "args": [],
       "env": {
@@ -108,7 +108,7 @@ Add to your Cursor settings (`Cmd/Ctrl + ,` → Extensions → MCP):
 ```json
 {
   "mcp.servers": {
-    "fdep-haskell-analysis": {
+    "fdepAnalyzer": {
       "command": "fdep-mcp-server",
       "args": [],
       "env": {
@@ -128,7 +128,7 @@ Install the MCP extension and add to `settings.json`:
 {
   "mcp.servers": [
     {
-      "name": "fdep-haskell-analysis",
+      "name": "fdepAnalyzer",
       "command": "fdep-mcp-server", 
       "args": [],
       "env": {
@@ -146,7 +146,7 @@ Add to your Cline configuration:
 ```json
 {
   "mcpServers": {
-    "fdep": {
+    "fdepAnalyzer": {
       "command": "fdep-mcp-server",
       "args": [],
       "env": {
@@ -165,7 +165,7 @@ Add to your `.continue/config.json`:
 {
   "mcpServers": [
     {
-      "name": "fdep",
+      "name": "fdepAnalyzer",
       "command": "fdep-mcp-server",
       "args": [],
       "env": {
@@ -182,7 +182,7 @@ Add to your `.continue/config.json`:
 For any MCP-compatible client:
 ```json
 {
-  "server_name": "fdep-haskell-analysis",
+  "server_name": "fdepAnalyzer",
   "command": "fdep-mcp-server",
   "args": [],
   "environment": {
@@ -216,7 +216,7 @@ DEV_MODE=false
 ### **Verify Connection**
 After configuring your client, verify the connection:
 1. Start your MCP client
-2. Look for "fdep" in available tools/servers
+2. Look for "fdepAnalyzer" in available tools/servers
 3. Test with a simple query: `list_modules(limit=5)`
 4. You should see your Haskell modules listed
 
