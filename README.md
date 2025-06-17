@@ -39,26 +39,43 @@ brew services start postgresql
 sudo systemctl start postgresql
 
 # Create the database
-createdb code_as_data
+createdb code_as_data # this should match with you $DB_NAME value in .env file (DEFAULT: code_as_data)
 ```
 
 ### Installation
 
-1. **Install via UV (recommended)**:
 ```bash
-
-# Clone and install in development mode
+# Clone the repository
 git clone https://github.com/juspay/fdep-mcp-server.git
 cd fdep_mcp
-uv venv
-source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 
-uv pip install .
+# Install globally with UV (recommended)
+uv tool install .
 
-python scripts/setup_database.py --setup --verbose # Initialize database and import FDEP data
+# OR install globally with pipx
+# pipx install .
+
+# OR system-wide installation
+# pip install .vi 
 ```
 
-2. **Configure environment**:
+### Database Setup and Data Import
+
+**Important**: Complete this step before using the MCP server with any client.
+
+```bash
+fdep-mcp-server --setup --verbose
+```
+
+This command will:
+- Initialize the PostgreSQL database schema
+- Import and process your FDEP data (if FDEP_PATH is configured)
+- Set up all necessary indexes and relationships
+
+**Note**: The first run takes time as it processes large FDEP datasets.
+
+### Configure Environment
+
 ```bash
 cp .env.example .env
 # Edit .env with your database settings and FDEP_PATH
