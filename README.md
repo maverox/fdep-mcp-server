@@ -54,6 +54,8 @@ uv venv
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 
 uv pip install .
+
+python scripts/setup_database.py --setup --verbose # Initialize database and import FDEP data
 ```
 
 2. **Configure environment**:

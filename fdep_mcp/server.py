@@ -7,15 +7,11 @@ stored in PostgreSQL via the code analysis tool.
 """
 
 import asyncio
-import hashlib
-import json
 import logging
 import os
 import sys
 import warnings
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import mcp.types as types
 from mcp.server import Server
@@ -31,8 +27,7 @@ warnings.filterwarnings("ignore", message=".*declarative_base.*")
 # Import required code analysis library components
 from code_as_data.db.connection import SessionLocal
 from code_as_data.services.query_service import QueryService
-from code_as_data.services.dump_service import DumpService
-from code_as_data.db.models import Function, Module, Base
+from code_as_data.db.models import Function, Module
 
 # Load environment variables
 load_dotenv()
@@ -114,86 +109,6 @@ class CodeAnalysisService:
             self.cleanup()
             return False
     
-    def import_fdep_data(self, fdep_path: str, force_reimport: bool = False) -> bool:
-        """Import FDEP data from specified path using DumpService's own session management"""
-        logger.debug(f"import_fdep_data called with path: {fdep_path}, force_reimport: {force_reimport}")
-        
-        if not self.initialized:
-            logger.error("Service not initialized")
-            logger.debug("Service initialization check failed")
-            return False
-        
-        try:
-            logger.info(f"Starting FDEP data import from: {fdep_path}")
-            logger.debug(f"Validating FDEP path existence: {fdep_path}")
-            
-            # Validate path one more time before creating DumpService
-            if not Path(fdep_path).exists():
-                logger.debug(f"Path validation failed - path does not exist: {fdep_path}")
-                raise FileNotFoundError(f"FDEP path does not exist: {fdep_path}")
-            
-            logger.debug(f"Path validation successful: {fdep_path}")
-            
-            # Handle force reimport by dropping and recreating database schema
-            if force_reimport:
-                logger.info("Force reimport requested - dropping and recreating database schema")
-                try:
-                    # Use our session only for schema recreation, then close it
-                    engine = self.db_session.get_bind()
-                    logger.debug("Dropping all tables...")
-                    Base.metadata.drop_all(engine)
-                    logger.debug("Recreating all tables...")
-                    Base.metadata.create_all(engine)
-                    
-                    # Commit the schema changes and close our session
-                    self.db_session.commit()
-                    self.db_session.close()
-                    logger.info("Database schema successfully recreated")
-                except Exception as schema_error:
-                    logger.error(f"Failed to recreate database schema: {schema_error}")
-                    self.db_session.rollback()
-                    raise schema_error
-            
-            # Create DumpService with required paths
-            logger.debug(f"Creating DumpService with path: {fdep_path}")
-            dump_service = DumpService(fdep_path, fdep_path)
-            logger.debug("DumpService created successfully")
-            
-            # Let DumpService handle all database operations with its own session management
-            logger.debug("Calling dump_service.insert_data() - DumpService will manage all DB operations")
-            dump_service.insert_data()
-            logger.debug("dump_service.insert_data() completed successfully")
-            logger.info("FDEP data import completed successfully")
-            
-            # Explicit cleanup of our own session to ensure no hanging connections
-            logger.debug("Performing explicit session cleanup")
-            try:
-                if self.db_session:
-                    self.db_session.close()
-                    logger.debug("Service session closed successfully")
-                
-                # Re-create a fresh session for future operations
-                self.db_session = SessionLocal()
-                self.query_service = QueryService(self.db_session)
-                logger.debug("Fresh session created for future operations")
-            except Exception as cleanup_error:
-                logger.warning(f"Error during session cleanup: {cleanup_error}")
-                # Try to recover with a fresh session
-                try:
-                    self.db_session = SessionLocal()
-                    self.query_service = QueryService(self.db_session)
-                    logger.debug("Recovered with fresh session after cleanup error")
-                except Exception as recovery_error:
-                    logger.error(f"Failed to recover session: {recovery_error}")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to import FDEP data: {e}")
-            logger.debug(f"Exception type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Detailed error: {traceback.format_exc()}")
-            return False
     
     def __enter__(self):
         """Context manager entry"""
@@ -207,40 +122,6 @@ class CodeAnalysisService:
 code_service = CodeAnalysisService()
 
 # Validation helper functions
-def validate_fdep_directory(fdep_path: str) -> tuple[bool, str]:
-    """Validate that the FDEP directory has the expected structure"""
-    logger.debug(f"Validating FDEP directory: {fdep_path}")
-    try:
-        path = Path(fdep_path)
-        logger.debug(f"Created Path object for: {fdep_path}")
-        
-        if not path.exists():
-            logger.debug(f"Path does not exist: {fdep_path}")
-            return False, f"Directory does not exist: {fdep_path}"
-        
-        logger.debug(f"Path exists: {fdep_path}")
-        
-        if not path.is_dir():
-            logger.debug(f"Path is not a directory: {fdep_path}")
-            return False, f"Path is not a directory: {fdep_path}"
-        
-        logger.debug(f"Path is a directory: {fdep_path}")
-        
-        # Check for expected JSON data files
-        logger.debug("Searching for JSON files...")
-        json_files = list(path.glob("*.json")) + list(path.glob("**/*.json"))
-        logger.debug(f"Found {len(json_files)} JSON files")
-        
-        if not json_files:
-            logger.debug(f"No JSON files found in: {fdep_path}")
-            return False, f"No JSON files found in directory: {fdep_path}"
-        
-        logger.debug(f"Directory validation successful: {fdep_path}")
-        return True, "Directory structure is valid"
-        
-    except Exception as e:
-        logger.debug(f"Exception during directory validation: {e}")
-        return False, f"Error validating directory: {e}"
 
 # Search pattern normalization helper
 def normalize_search_pattern(pattern: str) -> str:
@@ -277,178 +158,10 @@ def build_like_pattern(pattern: str) -> str:
     # Otherwise, wrap with % for contains matching
     return f"%{normalized}%"
 
-# State management for import optimization
-def get_directory_hash(directory_path: str) -> str:
-    """Calculate a hash of the directory contents based on file paths, sizes, and modification times"""
-    try:
-        path = Path(directory_path)
-        if not path.exists() or not path.is_dir():
-            return ""
-        
-        # Collect file information for hashing
-        file_info = []
-        
-        # Walk through all files in the directory
-        for file_path in sorted(path.rglob("*")):
-            if file_path.is_file():
-                try:
-                    stat = file_path.stat()
-                    # Include relative path, size, and modification time
-                    rel_path = file_path.relative_to(path)
-                    file_info.append(f"{rel_path}|{stat.st_size}|{stat.st_mtime}")
-                except (OSError, ValueError):
-                    # Skip files we can't stat
-                    continue
-        
-        # Create hash from all file information
-        content = "\n".join(file_info)
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
-    
-    except Exception as e:
-        logger.warning(f"Failed to calculate directory hash: {e}")
-        return ""
-
-def get_state_file_path(fdep_path: str) -> Path:
-    """Get the path to the state file using platform-appropriate cache directory"""
-    import sys
-    import os
-    
-    # Platform-specific cache directories (following XDG spec and platform conventions)
-    if sys.platform == 'darwin':  # macOS
-        cache_base = Path.home() / "Library/Caches"
-    elif sys.platform.startswith('linux'):
-        cache_base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
-    elif sys.platform == 'win32':
-        cache_base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local'))
-    else:
-        # Fallback to temp for unknown platforms
-        import tempfile
-        cache_base = Path(tempfile.gettempdir())
-    
-    # Create app-specific cache directory
-    app_cache = cache_base / "fdep_mcp"
-    app_cache.mkdir(parents=True, exist_ok=True)
-    
-    # Use normalized absolute path for consistent hashing
-    normalized_path = Path(fdep_path).resolve()
-    safe_name = hashlib.md5(str(normalized_path).encode('utf-8')).hexdigest()
-    return app_cache / f"fdep_state_{safe_name}.json"
-
-def get_last_import_state(fdep_path: str) -> Dict[str, Any]:
-    """Get the last import state for the given fdep directory"""
-    state_file = get_state_file_path(fdep_path)
-    
-    try:
-        if state_file.exists():
-            with open(state_file, 'r') as f:
-                state = json.load(f)
-                return state
-    except Exception as e:
-        logger.warning(f"Failed to read import state: {e}")
-    
-    return {
-        "fdep_path": fdep_path,
-        "last_hash": "",
-        "last_import_time": None,
-        "last_import_success": False
-    }
-
-def save_import_state(fdep_path: str, directory_hash: str, success: bool) -> None:
-    """Save the import state after an import operation"""
-    state_file = get_state_file_path(fdep_path)
-    
-    state = {
-        "fdep_path": fdep_path,
-        "last_hash": directory_hash,
-        "last_import_time": datetime.now().isoformat(),
-        "last_import_success": success
-    }
-    
-    try:
-        with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
-        logger.debug(f"Saved import state to {state_file}")
-    except Exception as e:
-        logger.warning(f"Failed to save import state: {e}")
-
-def should_import_data(fdep_path: str, force_reimport: bool = False, current_hash: Optional[str] = None) -> tuple[bool, str, str]:
-    """Determine if data should be imported based on database state and directory changes
-    
-    Checks all import scenarios:
-    - Database connectivity
-    - Schema existence  
-    - Data existence
-    - Directory changes (hash-based)
-    - Force reimport requests
-    
-    Returns:
-        tuple: (should_import: bool, reason: str, current_hash: str)
-    """
-    logger.debug(f"Checking if import needed for: {fdep_path}")
-    logger.debug(f"Force reimport: {force_reimport}")
-    
-    # No database validation - rely on DumpService.prepare_database() for proper setup
-    
-    if force_reimport:
-        logger.debug("Force reimport requested")
-        # Still need hash for state tracking
-        if current_hash is None:
-            logger.debug("Calculating hash for force reimport")
-            current_hash = get_directory_hash(fdep_path)
-        logger.debug(f"Force reimport hash: {current_hash[:8]}...")
-        return True, "Force reimport requested", current_hash
-    
-    # Calculate current directory hash if not provided
-    if current_hash is None:
-        logger.debug("Calculating current directory hash")
-        current_hash = get_directory_hash(fdep_path)
-        logger.debug(f"Current hash: {current_hash[:8]}...")
-    
-    if not current_hash:
-        logger.debug("Failed to calculate directory hash")
-        return True, "Failed to calculate directory hash", ""
-    
-    # Get last import state
-    logger.debug("Getting last import state")
-    last_state = get_last_import_state(fdep_path)
-    last_hash = last_state.get("last_hash", "")
-    logger.debug(f"Last hash: {last_hash[:8] if last_hash else 'none'}...")
-    
-    # Compare hashes
-    if current_hash != last_hash:
-        logger.debug("Directory changes detected (hash mismatch)")
-        return True, f"Directory changes detected (hash changed)", current_hash
-    
-    # Check if last import was successful
-    last_success = last_state.get("last_import_success", False)
-    logger.debug(f"Last import success: {last_success}")
-    
-    if not last_success:
-        logger.debug("Previous import failed")
-        return True, "Previous import failed", current_hash
-    
-    last_time = last_state.get('last_import_time', 'unknown')
-    logger.debug(f"No reimport needed - last successful import: {last_time}")
-    return False, f"No changes detected since {last_time}", current_hash
 @mcp_server.list_tools()
 async def list_tools() -> List[types.Tool]:
     """List available MCP tools"""
     return [
-        types.Tool(
-            name="reimport_database",
-            description="Force reimport of FDEP data from FDEP_PATH environment variable, if the user asks for it",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Confirm that you want to reimport (this will reload all data)",
-                        "default": False
-                    }
-                },
-                "additionalProperties": False
-            }
-        ),
         types.Tool(
             name="list_modules",
             description="Get list of all modules in the database",
@@ -1602,9 +1315,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
     logger.debug(f"Tool call received: {name}")
     logger.debug(f"Tool arguments: {arguments}")
     
-    if name == "reimport_database":
-        return await handle_reimport_database(arguments)
-    elif name == "list_modules":
+    if name == "list_modules":
         return await handle_list_modules(arguments)
     elif name == "get_function_details":
         return await handle_get_function_details(arguments)
@@ -1702,94 +1413,6 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
     else:
         raise ValueError(f"Unknown tool: {name}")
 
-async def handle_reimport_database(arguments: Dict[str, Any]) -> List[types.TextContent]:
-    """Force reimport of FDEP data"""
-    logger.debug("handle_reimport_database called")
-    logger.debug(f"Arguments: {arguments}")
-    
-    confirm = arguments.get("confirm", False)
-    
-    if not confirm:
-        return [types.TextContent(
-            type="text",
-            text="Error: You must set 'confirm' to true to proceed with reimport. This will reload all data and may take time."
-        )]
-    
-    # Input validation
-    fdep_path = config.fdep_path
-    logger.debug(f"FDEP path from config: {fdep_path}")
-    
-    if not fdep_path:
-        logger.debug("FDEP_PATH not set in configuration")
-        return [types.TextContent(
-            type="text",
-            text="Error: FDEP_PATH environment variable not set. Please set it in your .env file."
-        )]
-    
-    # Validate FDEP directory structure
-    logger.debug("Starting FDEP directory validation")
-    is_valid_dir, dir_error = validate_fdep_directory(fdep_path)
-    logger.debug(f"Directory validation result: valid={is_valid_dir}, error={dir_error}")
-    
-    if not is_valid_dir:
-        logger.debug(f"Directory validation failed: {dir_error}")
-        return [types.TextContent(
-            type="text",
-            text=f"Error: {dir_error}"
-        )]
-    
-    # Initialize service if not already done
-    logger.debug(f"Code service initialized: {code_service.initialized}")
-    if not code_service.initialized:
-        logger.debug("Initializing code service...")
-        if not code_service.initialize():
-            logger.debug("Code service initialization failed")
-            return [types.TextContent(
-                type="text",
-                text="Error: Failed to initialize code analysis service"
-            )]
-        logger.debug("Code service initialization successful")
-    
-    # Force reimport
-    logger.info("Force reimport requested by user")
-    logger.debug("Proceeding with force reimport")
-    
-    # Import FDEP data with force reimport
-    try:
-        logger.info(f"Attempting force reimport from: {fdep_path}")
-        logger.debug("Calling code_service.import_fdep_data() with force_reimport=True")
-        import_success = code_service.import_fdep_data(fdep_path, force_reimport=True)
-        logger.debug(f"Import operation completed: success={import_success}")
-        
-        if not import_success:
-            logger.error("Force reimport failed - check logs for details")
-            return [types.TextContent(
-                type="text",
-                text="Error: Failed to reimport FDEP data. Check application logs for detailed error information."
-            )]
-        
-        # Save successful import state
-        logger.debug("Import successful, saving state")
-        current_hash = get_directory_hash(fdep_path)
-        save_import_state(fdep_path, current_hash, True)
-        logger.debug("Import state saved")
-            
-    except Exception as e:
-        logger.error(f"Unexpected error during reimport: {e}")
-        logger.debug(f"Unexpected reimport exception: {type(e).__name__}: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        return [types.TextContent(
-            type="text",
-            text=f"Error: Unexpected error during reimport: {e}. Check logs for full details."
-        )]
-    
-    # Return success message without statistics to avoid hanging
-    logger.debug("Returning successful reimport response")
-    return [types.TextContent(
-        type="text",
-        text=f"Successfully reimported database from {fdep_path}"
-    )]
 
 async def handle_list_modules(arguments: Dict[str, Any]) -> List[types.TextContent]:
     """List all modules"""
@@ -5234,118 +4857,6 @@ def _format_call_graph_graph(node, include_signatures, filter_modules):
     
     return result
 
-async def startup_initialization():
-    """Perform startup initialization: setup database and import FDEP data"""
-    logger.info("Performing startup initialization...")
-    logger.debug("Starting detailed startup initialization process")
-    
-    try:
-        # Validate configuration
-        logger.debug("Validating configuration...")
-        is_valid, config_errors = config.validate_config()
-        logger.debug(f"Configuration validation: valid={is_valid}, errors={config_errors}")
-        
-        if not is_valid:
-            logger.warning(f"Configuration issues found: {', '.join(config_errors)}")
-        
-        logger.info(f"Server configuration: {config}")
-        logger.debug(f"Configuration details: {vars(config)}")
-        
-        # Try to initialize service
-        logger.debug("Attempting to initialize code analysis service...")
-        try:
-            logger.debug("Calling code_service.initialize()...")
-            if code_service.initialize():
-                logger.info("Code analysis service initialized successfully")
-                logger.debug("Service initialization completed")
-                
-                # Now attempt automatic FDEP data import if configured
-                await _perform_automatic_data_import()
-                
-            else:
-                logger.warning("Failed to initialize code analysis service - tools will show errors")
-                logger.debug("Service initialization returned False")
-        except Exception as e:
-            logger.warning(f"Database connection failed: {e} - tools will show errors")
-            logger.debug(f"Service initialization exception: {type(e).__name__}: {e}")
-        
-        logger.debug("Startup initialization completed successfully")
-        return True  # Always continue
-            
-    except Exception as e:
-        logger.error(f"Startup initialization failed: {e}")
-        logger.debug(f"Startup initialization exception: {type(e).__name__}: {e}")
-        import traceback
-        logger.debug(f"Full traceback: {traceback.format_exc()}")
-        return True  # Still continue to start MCP server
-
-async def _perform_automatic_data_import():
-    """Automatically import FDEP data during startup if needed"""
-    logger.debug("Starting automatic FDEP data import check")
-    
-    # Get FDEP path from config
-    fdep_path = config.fdep_path
-    logger.debug(f"FDEP path from config: {fdep_path}")
-    
-    if not fdep_path:
-        logger.info("FDEP_PATH not configured - skipping automatic data import")
-        logger.debug("No FDEP_PATH set in configuration")
-        return
-    
-    # Validate FDEP directory structure
-    logger.debug("Starting FDEP directory validation")
-    is_valid_dir, dir_error = validate_fdep_directory(fdep_path)
-    logger.debug(f"Directory validation result: valid={is_valid_dir}, error={dir_error}")
-    
-    if not is_valid_dir:
-        logger.warning(f"FDEP directory validation failed: {dir_error}")
-        logger.warning("Skipping automatic data import - fix FDEP_PATH to enable")
-        return
-    
-    # Check if import is needed (hash calculated once here)
-    logger.debug("Checking if import is needed")
-    should_import, reason, current_hash = should_import_data(fdep_path, force_reimport=False)
-    logger.debug(f"Import decision: should_import={should_import}, reason={reason}")
-    
-    # Import FDEP data if needed
-    if should_import:
-        logger.info(f"Importing FDEP data automatically: {reason}")
-        logger.debug("Proceeding with automatic FDEP data import")
-        
-        # Import FDEP data with better error handling
-        try:
-            logger.info(f"Attempting automatic import from: {fdep_path}")
-            logger.debug("Calling code_service.import_fdep_data()")
-            import_success = code_service.import_fdep_data(fdep_path, force_reimport=False)
-            logger.debug(f"Import operation completed: success={import_success}")
-            
-            if not import_success:
-                logger.error("Automatic import failed - check logs for details")
-                logger.debug("Import failed, not saving state")
-                return
-            
-            # Save successful import state
-            logger.debug("Import successful, saving state")
-            save_import_state(fdep_path, current_hash, True)
-            logger.debug("Import state saved")
-            
-            # Import completed successfully - avoid statistics queries that could hang
-            logger.info("Automatic import completed successfully")
-                
-        except Exception as e:
-            logger.error(f"Unexpected error during automatic import: {e}")
-            logger.debug(f"Automatic import exception: {type(e).__name__}: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
-            return
-    else:
-        logger.info(f"Skipping automatic import: {reason}")
-        logger.debug("No automatic import needed")
-    
-    # Database schema is handled by DumpService.prepare_database() - no additional validation needed
-    
-    logger.info("Automatic database initialization completed successfully")
-    logger.debug("_perform_automatic_data_import completed")
 
 
 async def main():
@@ -5355,10 +4866,12 @@ async def main():
         logger.info("Starting FDEP MCP Server")
         logger.debug("FDEP MCP Server startup initiated")
         
-        # Perform startup initialization
-        logger.debug("Starting startup initialization...")
-        await startup_initialization()
-        logger.debug("Startup initialization completed")
+        # Initialize code service (database connection only)
+        logger.debug("Initializing code analysis service...")
+        if code_service.initialize():
+            logger.info("Code analysis service initialized successfully")
+        else:
+            logger.warning("Failed to initialize code analysis service - tools will show errors")
         
         logger.info("Starting MCP protocol server...")
         logger.debug("Creating stdio server context...")
